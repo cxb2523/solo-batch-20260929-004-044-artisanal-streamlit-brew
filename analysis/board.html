@@ -1,0 +1,546 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Nebula Cafe · /trace 常驻分析看板</title>
+<style>
+:root{
+  --bg:#0d1117; --bg-2:#11161d; --panel:#161b22; --panel-2:#1c2230;
+  --border:#2d333b; --text:#e6edf3; --muted:#8b949e;
+  --ok:#39d353; --bad:#f85149; --warn:#d29922; --accent:#0ea5e9; --accent-2:#39d353;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Courier New",monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif}
+a{color:var(--accent)}
+header.top{position:sticky;top:0;z-index:20;background:rgba(13,17,23,.92);backdrop-filter:blur(10px);border-bottom:1px solid var(--border);padding:12px 20px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+header.top h1{font-size:15px;margin:0;font-weight:700;letter-spacing:.02em}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--muted);display:inline-block}
+.dot.live{background:var(--ok);box-shadow:0 0 10px var(--ok)}
+.dot.stale{background:var(--warn)}
+.badge{font-family:var(--mono);font-size:11px;padding:2px 8px;border:1px solid var(--border);border-radius:999px;color:var(--muted)}
+.badge b{color:var(--text);font-weight:600}
+.spacer{flex:1}
+main{max-width:1280px;margin:0 auto;padding:20px}
+.grid{display:grid;grid-template-columns:1.15fr .85fr;gap:18px}
+@media (max-width:980px){.grid{grid-template-columns:1fr}}
+.panel{background:var(--panel);border:1px solid var(--border);border-radius:12px;overflow:hidden}
+.panel>h2{margin:0;padding:12px 16px;font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--border);display:flex;gap:10px;align-items:center}
+.panel .body{padding:14px 16px;max-height:70vh;overflow:auto}
+ul.checks{list-style:none;margin:0;padding:0}
+ul.checks li{padding:10px 12px;border:1px solid var(--border);border-radius:10px;margin-bottom:8px;cursor:pointer;background:var(--bg-2)}
+ul.checks li:hover{border-color:var(--accent)}
+ul.checks li.pass{opacity:.72}
+.row1{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.status{width:9px;height:9px;border-radius:50%}
+.status.pass{background:var(--ok)} .status.fail{background:var(--bad)}
+.check-title{font-weight:600}
+.check-id{font-family:var(--mono);font-size:11px;color:var(--muted)}
+.refs{margin-top:7px;display:flex;gap:6px;flex-wrap:wrap}
+.ref{font-family:var(--mono);font-size:11px;border:1px solid var(--border);border-radius:6px;padding:1px 7px;color:var(--muted);background:var(--panel)}
+.ref.file{color:var(--text)}
+.ref.idx{border-color:#3b4a5e}
+.ref.prev{border-color:#34503e}
+.ref.btn{border-color:#3d4a2f}
+
+.graph-wrap{position:relative;height:420px;overflow:auto;border-top:1px solid var(--border);background:radial-gradient(circle at 30% 0%,rgba(14,165,233,.08),transparent 60%),var(--bg-2)}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:11px;color:var(--muted);padding:10px 16px;border-bottom:1px solid var(--border)}
+.legend span{display:inline-flex;gap:6px;align-items:center}
+.swatch{width:10px;height:10px;border-radius:3px}
+svg.graph{display:block;min-width:100%}
+.gnode{cursor:pointer}
+.gnode rect{fill:var(--panel-2);stroke:var(--border);stroke-width:1;rx:8}
+.gnode:hover rect{stroke:var(--accent)}
+.gnode text{fill:var(--text);font-size:10.5px;pointer-events:none}
+.gnode text.sub{fill:var(--muted);font-family:var(--mono);font-size:9.5px}
+.gnode.fail rect{stroke:var(--bad)}
+.gnode.pass rect{stroke:#2f5d3a}
+.gnode.selected rect{stroke:var(--accent);stroke-width:2}
+.edge{stroke:#3a4350;stroke-width:1;fill:none}
+.edge.fail{stroke:var(--bad);stroke-dasharray:4 3}
+.edge.pass{stroke:#2f5d3a}
+
+.trade{border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:12px;background:var(--bg-2)}
+.trade h3{margin:0 0 4px;font-size:13.5px}
+.trade .why{color:var(--muted);font-size:12px;margin:0 0 10px}
+table.metrics{width:100%;border-collapse:collapse;font-size:12px;font-family:var(--mono)}
+table.metrics th,table.metrics td{padding:5px 8px;border-bottom:1px solid var(--border);text-align:right}
+table.metrics th:first-child,table.metrics td:first-child{text-align:left;color:var(--muted)}
+table.metrics th{color:var(--muted);font-weight:500;font-size:11px}
+.delta{color:var(--accent-2)}
+.warn{color:var(--warn)}
+
+.drawer{position:fixed;top:0;right:0;height:100vh;width:min(560px,92vw);background:var(--panel);border-left:1px solid var(--border);box-shadow:-18px 0 40px rgba(0,0,0,.5);transform:translateX(105%);transition:transform .18s ease;z-index:40;display:flex;flex-direction:column}
+.drawer.open{transform:translateX(0)}
+.drawer header{padding:14px 18px;border-bottom:1px solid var(--border);display:flex;gap:10px;align-items:center}
+.drawer header h3{margin:0;font-size:14px;flex:1}
+.drawer .content{padding:14px 18px;overflow:auto}
+button.close{background:transparent;color:var(--muted);border:1px solid var(--border);border-radius:8px;padding:5px 10px;cursor:pointer}
+button.close:hover{color:var(--text);border-color:var(--accent)}
+pre.code{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px;overflow:auto;font-family:var(--mono);font-size:11.5px;line-height:1.5;max-height:46vh}
+pre.code .hl{background:rgba(210,153,34,.28);display:block;margin:0 -12px;padding:0 12px}
+.meta-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+.jump{display:inline-flex;gap:6px;align-items:center;font-family:var(--mono);font-size:11.5px;padding:5px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg-2);color:var(--text);cursor:pointer;text-decoration:none}
+.jump:hover{border-color:var(--accent)}
+
+.syncbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:10px 16px;border-bottom:1px solid var(--border);font-size:12px;color:var(--muted)}
+.syncbar b{color:var(--text)}
+.btn{background:var(--panel-2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 12px;font-size:12px;cursor:pointer}
+.btn:hover{border-color:var(--accent)}
+.toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:var(--panel-2);border:1px solid var(--border);padding:9px 16px;border-radius:10px;font-size:12.5px;opacity:0;transition:opacity .2s;z-index:60;pointer-events:none}
+.toast.show{opacity:1}
+.counters{font-family:var(--mono);font-size:11px;color:var(--muted)}
+</style>
+</head>
+<body>
+<header class="top">
+  <span class="dot" id="conn-dot"></span>
+  <h1>/trace · Nebula Cafe 常驻分析管线</h1>
+  <span class="badge">revision <b id="rev">—</b></span>
+  <span class="badge">检查 <b id="counts">—</b></span>
+  <span class="badge">标签页 <b id="peers">1</b></span>
+  <span class="spacer"></span>
+  <span class="counters" id="counters">recv 0 · render 0 · skip 0</span>
+</header>
+<main>
+  <div class="grid">
+    <div>
+      <div class="panel" style="margin-bottom:18px">
+        <h2>对账差异（点击定位文件:行号）</h2>
+        <div class="syncbar">
+          <span>筛选：</span>
+          <button class="btn" data-filter="all">全部</button>
+          <button class="btn" data-filter="fail">仅差异</button>
+          <button class="btn" data-filter="pass">仅通过</button>
+          <span class="spacer"></span>
+          <span>首个不一致：<b id="first-mismatch">—</b></span>
+        </div>
+        <div class="body"><ul class="checks" id="checks"></ul></div>
+      </div>
+    </div>
+    <div>
+      <div class="panel" style="margin-bottom:18px">
+        <h2>引用图 · 点节点落到选择器/脚本/SVG</h2>
+        <div class="legend">
+          <span><i class="swatch" style="background:#3b4a5e"></i>index DOM/选择器</span>
+          <span><i class="swatch" style="background:#5e4a3b"></i>内联脚本</span>
+          <span><i class="swatch" style="background:#34503e"></i>preview.svg</span>
+          <span><i class="swatch" style="background:#3d4a2f"></i>button.svg</span>
+          <span><i class="swatch" style="background:#5e3b3b"></i>README</span>
+        </div>
+        <div class="graph-wrap"><svg class="graph" id="graph" width="100%" height="420"></svg></div>
+      </div>
+    </div>
+  </div>
+  <div class="panel">
+    <h2>三个互相牵制的取舍（本机实测数字）</h2>
+    <div class="body" id="tradeoffs"></div>
+  </div>
+</main>
+
+<aside class="drawer" id="drawer" aria-hidden="true">
+  <header>
+    <h3 id="drawer-title">节点</h3>
+    <button class="close" id="drawer-close">关闭</button>
+  </header>
+  <div class="content" id="drawer-body"></div>
+</aside>
+<div class="toast" id="toast"></div>
+<script>
+(() => {
+  'use strict';
+  const $ = (sel) => document.querySelector(sel);
+  const els = {
+    dot: $('#conn-dot'), rev: $('#rev'), counts: $('#counts'), peers: $('#peers'),
+    counters: $('#counters'), checks: $('#checks'), graph: $('#graph'),
+    tradeoffs: $('#tradeoffs'), first: $('#first-mismatch'),
+    drawer: $('#drawer'), drawerTitle: $('#drawer-title'), drawerBody: $('#drawer-body'),
+    drawerClose: $('#drawer-close'), toast: $('#toast'),
+  };
+
+  // ---- render-once-per-revision guard ------------------------------------
+  const seen = { recv: 0, rendered: 0, skipped: 0 };
+  let lastRenderedRevision = null;
+  let state = null;
+  let filter = 'all';
+
+  function bumpCounters() {
+    els.counters.textContent = `recv ${seen.recv} · render ${seen.rendered} · skip ${seen.skipped}`;
+  }
+  function toast(msg) {
+    els.toast.textContent = msg;
+    els.toast.classList.add('show');
+    clearTimeout(toast._t);
+    toast._t = setTimeout(() => els.toast.classList.remove('show'), 2200);
+  }
+
+  function ingest(nextState, meta = {}) {
+    seen.recv++;
+    if (!nextState || !nextState.revision) return;
+    if (nextState.revision === lastRenderedRevision) {
+      // Duplicate SSE push / replay / cross-tab echo: never render twice.
+      seen.skipped++;
+      bumpCounters();
+      return;
+    }
+    lastRenderedRevision = nextState.revision;
+    state = nextState;
+    seen.rendered++;
+    render();
+    bumpCounters();
+    if (meta.reason && meta.reason !== 'initial') toast(`已重渲染 ${meta.reason} @ ${nextState.revision}`);
+  }
+
+  // ---- cross-tab election: only one tab broadcasts storage fan-out -------
+  const TAB_ID = Math.random().toString(36).slice(2, 9);
+  const LEADER_KEY = 'trace.leader';
+  const HEARTBEAT_MS = 1500;
+  function becomeLeader() {
+    localStorage.setItem(LEADER_KEY, JSON.stringify({ tab: TAB_ID, t: Date.now() }));
+  }
+  function isLeader() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(LEADER_KEY) || 'null');
+      if (!raw) return true;
+      if (raw.tab === TAB_ID) return true;
+      return Date.now() - raw.t > HEARTBEAT_MS * 2;
+    } catch { return true; }
+  }
+  if (isLeader()) becomeLeader();
+  setInterval(() => { if (isLeader()) becomeLeader(); }, HEARTBEAT_MS);
+  window.addEventListener('beforeunload', () => {
+    try {
+      const raw = JSON.parse(localStorage.getItem(LEADER_KEY) || 'null');
+      if (raw && raw.tab === TAB_ID) localStorage.removeItem(LEADER_KEY);
+    } catch {}
+  });
+
+  // ---- SSE ---------------------------------------------------------------
+  function connect() {
+    const es = new EventSource('/events');
+    es.addEventListener('hello', (ev) => {
+      const data = JSON.parse(ev.data);
+      els.dot.className = 'dot live';
+      ingest(data.state, { reason: 'initial' });
+      els.peers.textContent = String(data.clients);
+    });
+    es.addEventListener('state', (ev) => {
+      const data = JSON.parse(ev.data);
+      ingest(data.state, { reason: data.reason });
+      // Leader also fans the revision out over storage events so a second tab
+      // that is already open proves multi-tab sync even without a reload.
+      if (isLeader()) {
+        localStorage.setItem('trace.revision', JSON.stringify({
+          tab: TAB_ID, revision: data.revision.revision, at: Date.now(),
+        }));
+      }
+    });
+    es.addEventListener('presence', (ev) => {
+      els.peers.textContent = String(JSON.parse(ev.data).clients);
+    });
+    es.addEventListener('notice', (ev) => toast('管线通知: ' + JSON.parse(ev.data).error));
+    es.onerror = () => { els.dot.className = 'dot stale'; };
+    es.onopen = () => { els.dot.className = 'dot live'; };
+  }
+  // Other tabs render the leader's revision notice (no duplicate full render:
+  // their own SSE stream carries the same revision and the guard dedupes it).
+  window.addEventListener('storage', (ev) => {
+    if (ev.key !== 'trace.revision' || !ev.newValue) return;
+    const payload = JSON.parse(ev.newValue);
+    if (payload.tab === TAB_ID) return;
+    if (payload.revision === lastRenderedRevision) {
+      seen.skipped++;
+      bumpCounters();
+      return;
+    }
+    toast(`另一标签页广播 revision ${payload.revision.slice(0, 8)}，等待 SSE 内容`);
+  });
+  connect();
+
+  // Test hook: replay the current state as if SSE delivered it again.
+  // Returns counters so headless checks can assert duplicate suppression.
+  window.__traceReplay = () => {
+    ingest(state, { reason: 'replay-test' });
+    return { recv: seen.recv, rendered: seen.rendered, skipped: seen.skipped, revision: lastRenderedRevision };
+  };
+
+  // ---- rendering ---------------------------------------------------------
+  const FILE_CLASS = { 'index.html': 'idx', 'preview.svg': 'prev', 'button.svg': 'btn' };
+
+  function render() {
+    const report = state.report;
+    els.rev.textContent = state.revision;
+    els.counts.textContent = `${report.failures} 差 / ${report.passed} 过`;
+    if (report.first) {
+      const ref = (report.first.refs || [])[0] || {};
+      els.first.textContent = `${ref.file || '?'}:${ref.line || '?'}`;
+    } else els.first.textContent = '无';
+
+    const visible = report.checks.filter((check) =>
+      filter === 'all' ? true : filter === 'fail' ? check.status === 'fail' : check.status === 'pass');
+    els.checks.innerHTML = '';
+    for (const check of visible) {
+      const li = document.createElement('li');
+      li.className = check.status;
+      const refs = (check.refs || []).filter(Boolean);
+      li.innerHTML = `
+        <div class="row1">
+          <span class="status ${check.status}"></span>
+          <span class="check-title"></span>
+          <span class="check-id">${check.id}</span>
+        </div>
+        ${check.status === 'fail' ? `<div style="margin-top:6px;color:var(--muted);font-size:12px">期望：${escapeHtml(check.expected || '')}<br/>实际：${escapeHtml(check.actual || '')}</div>` : ''}
+        <div class="refs">${refs.map((ref) => `<span class="ref file ${FILE_CLASS[ref.file] || ''}">${ref.file}:${ref.line}</span>`).join('')}</div>`;
+      li.querySelector('.check-title').textContent = check.title;
+      li.addEventListener('click', () => {
+        const firstRef = refs[0];
+        if (firstRef) openRef(firstRef, check);
+      });
+      els.checks.appendChild(li);
+    }
+    renderGraph();
+    renderTradeoffs();
+  }
+
+  document.querySelectorAll('[data-filter]').forEach((btn) => {
+    btn.addEventListener('click', () => { filter = btn.dataset.filter; if (state) render(); });
+  });
+
+  function escapeHtml(text) {
+    return String(text == null ? '' : text)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  // ---- simple layered DAG layout ----------------------------------------
+  function renderGraph() {
+    const graph = state.graph;
+    const groups = ['README.md', 'index.html', 'preview.svg', 'button.svg'];
+    const columns = new Map(groups.map((group, index) => [group, { x: 40 + index * 300, nodes: [] }]));
+    for (const node of graph.nodes) {
+      const col = columns.get(node.group);
+      if (col) col.nodes.push(node);
+    }
+    const positions = new Map();
+    for (const col of columns.values()) {
+      col.nodes.forEach((node, index) => {
+        positions.set(nodeKey(node), { x: col.x, y: 30 + index * 46, node });
+      });
+    }
+
+    const height = Math.max(420, 30 + Math.max(...[...columns.values()].map((c) => c.nodes.length)) * 46);
+    els.graph.setAttribute('height', height);
+    els.graph.setAttribute('width', 4 * 300);
+    let svg = '';
+    for (const edge of graph.edges) {
+      const a = positions.get(edge.from);
+      const b = positions.get(edge.to);
+      if (!a || !b) continue;
+      const x1 = a.x + 240, y1 = a.y + 14, x2 = b.x, y2 = b.y + 14;
+      const mx = (x1 + x2) / 2;
+      svg += `<path class="edge ${edge.status}" d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}"/>`;
+    }
+    for (const col of columns.values()) {
+      for (const nodeRef of col.nodes) {
+        const pos = positions.get(nodeKey(nodeRef));
+        const checkStatus = statusForNode(nodeRef, graph);
+        svg += `<g class="gnode ${checkStatus}" data-key="${nodeKey(nodeRef)}" transform="translate(${pos.x},${pos.y})">
+          <rect width="240" height="34" rx="8"></rect>
+          <text x="10" y="15">${escapeHtml(truncate(nodeRef.label, 34))}</text>
+          <text class="sub" x="10" y="28">${escapeHtml(nodeRef.file)}:${nodeRef.line} ${escapeHtml(nodeRef.selector || nodeRef.kind || '')}</text>
+        </g>`;
+      }
+    }
+    els.graph.innerHTML = svg;
+    els.graph.querySelectorAll('.gnode').forEach((g) => {
+      g.addEventListener('click', () => {
+        const node = graph.nodes.find((candidate) => nodeKey(candidate) === g.dataset.key);
+        if (node) openNode(node);
+      });
+    });
+  }
+
+  function nodeKey(node) {
+    if (node.file === 'README.md') return `${node.file}:${node.line}:readme`;
+    if (node.file === 'index.html') return `${node.file}:${node.line}:${node.kind || (node.selector === 'script' ? 'script' : 'dom')}`;
+    return `${node.file}:${node.line}:svg`;
+  }
+  function truncate(text, n) {
+    text = String(text || '');
+    return text.length > n ? text.slice(0, n - 1) + '…' : text;
+  }
+  function statusForNode(node, graph) {
+    for (const edge of graph.edges) {
+      if ((edge.from === nodeKey(node) || edge.to === nodeKey(node)) && edge.status === 'fail') return 'fail';
+    }
+    return 'pass';
+  }
+
+  // ---- node drawer: jump to selector / inline script / SVG reference ------
+  async function fetchSource(file) {
+    const res = await fetch(`/source/${encodeURIComponent(file)}?format=json`);
+    if (!res.ok) throw new Error(`source ${file} unavailable`);
+    return res.json();
+  }
+
+  async function openNode(node) {
+    els.graph.querySelectorAll('.gnode.selected').forEach((g) => g.classList.remove('selected'));
+    const g = els.graph.querySelector(`.gnode[data-key="${CSS.escape(nodeKey(node))}"]`);
+    if (g) g.classList.add('selected');
+    els.drawer.classList.add('open');
+    els.drawerTitle.textContent = `${node.file}:${node.line}`;
+    els.drawerBody.innerHTML = '<div style="color:var(--muted)">加载源文件…</div>';
+
+    try {
+      let source;
+      if (node.file === 'index.html' && (node.kind === 'dom' || node.kind === 'script')) {
+        // index.html nodes point at the *decoded* payload the browser renders.
+        const text = await (await fetch('/decoded')).text();
+        source = { file: 'index.html (解码后)', text };
+      } else if (node.file === 'index.html' && node.kind === 'bootstrap') {
+        source = await fetchSource('index.html');
+        source.file = 'index.html (引导脚本)';
+      } else {
+        source = await fetchSource(node.file);
+      }
+      renderSource(source, node);
+    } catch (err) {
+      els.drawerBody.innerHTML = `<div class="warn">${escapeHtml(err.message)}</div>`;
+    }
+  }
+
+  async function openRef(ref, check) {
+    const node = state.graph.nodes.find((candidate) =>
+      candidate.file === ref.file && candidate.line === ref.line &&
+      (ref.file !== 'index.html' || candidate.selector === ref.selector || candidate.kind === 'script'));
+    if (node) return openNode(node);
+    // README refs and fallback: open raw source at the line.
+    els.drawer.classList.add('open');
+    els.drawerTitle.textContent = `${ref.file}:${ref.line}`;
+    try {
+      const source = await fetchSource(ref.file);
+      renderSource(source, { line: ref.line, selector: ref.selector, label: check && check.title });
+    } catch (err) {
+      els.drawerBody.textContent = err.message;
+    }
+  }
+
+  function renderSource(source, node) {
+    const lines = source.text.split(/\r?\n/);
+    const target = node.line || 1;
+    const start = Math.max(1, target - 5);
+    const end = Math.min(lines.length, target + 6);
+    const chunks = [];
+    for (let i = start; i <= end; i++) {
+      const line = lines[i - 1] ?? '';
+      const cls = i === target ? ' class="hl"' : '';
+      chunks.push(`<span${cls}><b style="color:var(--muted)">${String(i).padStart(4, ' ')}</b>  ${escapeHtml(line) || ' '}</span>`);
+    }
+    const links = [];
+    links.push(`<a class="jump" target="_blank" href="/source/${encodeURIComponent(node.file || source.file.split(' ')[0])}?line=${target}">在新标签打开源文件 ↗</a>`);
+    if (node.file === 'preview.svg') links.push(`<a class="jump" target="_blank" href="/source/preview.svg?line=${target}">preview.svg 引用处 ↗</a>`);
+    if (node.file === 'button.svg') links.push(`<a class="jump" target="_blank" href="/source/button.svg?line=${target}">button.svg 引用处 ↗</a>`);
+
+    els.drawerBody.innerHTML = `
+      <div class="meta-row">
+        <span class="ref file ${FILE_CLASS[node.file] || ''}">${escapeHtml(source.file)}</span>
+        <span class="ref">line ${target}</span>
+        ${node.selector ? `<span class="ref">${escapeHtml(node.selector)}</span>` : ''}
+      </div>
+      ${node.label ? `<div style="margin-bottom:10px">${escapeHtml(node.label)}</div>` : ''}
+      <div class="meta-row">${links.join('')}</div>
+      <pre class="code">${chunks.join('\n')}</pre>
+      ${node.detail && node.file !== 'README.md' ? `<h4 style="margin:14px 0 6px;font-size:12px;color:var(--muted)">脚本/片段</h4><pre class="code">${escapeHtml(node.detail)}</pre>` : ''}`;
+  }
+
+  els.drawerClose.addEventListener('click', () => els.drawer.classList.remove('open'));
+
+  // ---- trade-off panels --------------------------------------------------
+  function row(label, a, b, note) {
+    return `<tr><td>${label}</td><td>${a}</td><td>${b}</td>${note ? `<td class="${note.cls || ''}">${note.text}</td>` : '<td></td>'}</tr>`;
+  }
+  function renderTradeoffs() {
+    const t = state.tradeoffs;
+    const fmt = (n) => Number(n).toLocaleString('en-US');
+    const ij = t.inlineVsJson;
+    const ht = t.hardcodedVsTokens;
+    const hs = t.hashVsLocalStorage;
+    els.tradeoffs.innerHTML = `
+      <div class="trade">
+        <h3>① 指标内联（现状）vs 拆 JSON</h3>
+        <p class="why">现状是整页 base64+XOR 内联，引导脚本必须先同步解码再替换 body；拆 JSON 后壳子可先画、指标二次请求填充。</p>
+        <table class="metrics">
+          <tr><th></th><th>内联现状</th><th>拆 JSON</th><th>差</th></tr>
+          ${row('首屏字节', fmt(ij.inline.firstPaintBytes) + ' B', fmt(ij.jsonSplit.firstPaintBytes) + ' B', { text: '少 ' + fmt(ij.delta.firstPaintBytesSaved) + ' B', cls: 'delta' })}
+          ${row('请求数', ij.inline.requests, ij.jsonSplit.requests, { text: '+1（本地 RTT 中位数 ' + t.localhostRtt.medianMs + 'ms, σ ' + t.localhostRtt.stddevMs + 'ms）', cls: 'warn' })}
+          ${row('解析时机', '阻塞后首绘', '壳子先绘', { text: ij.inline.parseStage })}
+          ${row('解析耗时(中位数 ± σ)', ij.inline.parseMs.medianMs + 'ms ± ' + ij.inline.parseMs.stddevMs + 'ms', ij.jsonSplit.parseMs.medianMs + 'ms ± ' + ij.jsonSplit.parseMs.stddevMs + 'ms', { text: '快 ' + ij.delta.blockingDecodeVsJsonMs + 'ms', cls: 'delta' })}
+          ${row('base64 线传输膨胀', ij.inline.base64OverheadPct + '%', '无', { text: '编码本身多走 ' + fmt(ij.inline.payloadEncodedBytes - ij.inline.renderedBytes) + ' B', cls: 'warn' })}
+        </table>
+      </div>
+      <div class="trade">
+        <h3>② 图标颜色硬编码 vs CSS 变量令牌</h3>
+        <p class="why">两张 SVG 把十六进制颜色写死在属性里；换成 var(--token) 后初次体积略增，但换肤只动一张令牌表。</p>
+        <table class="metrics">
+          <tr><th></th><th>硬编码</th><th>变量令牌</th><th>差</th></tr>
+          ${row('两张 SVG 总体积', fmt(ht.hardcoded.totalBytes) + ' B', fmt(ht.tokens.estimatedBytes) + ' B', { text: (ht.delta.bytes >= 0 ? '+' : '') + fmt(ht.delta.bytes) + ' B', cls: 'warn' })}
+          ${row('颜色出现次数', ht.hardcoded.colorOccurrences, ht.tokens.reskinTouchPoints + ' 个令牌', { text: '换肤少改 ' + ht.delta.touchPointsSaved + ' 处', cls: 'delta' })}
+          ${row('换肤改写耗时(中位数 ± σ)', ht.hardcoded.reskinMs.medianMs + 'ms ± ' + ht.hardcoded.reskinMs.stddevMs + 'ms', ht.tokens.reskinMs.medianMs + 'ms ± ' + ht.tokens.reskinMs.stddevMs + 'ms', { text: '快 ' + ht.delta.reskinSpeedupMs + 'ms', cls: 'delta' })}
+          ${row('preview.svg / button.svg', ht.perFile[0].hardcodedColorOccurrences + ' 处颜色', ht.perFile[1].hardcodedColorOccurrences + ' 处颜色', { text: '去重后 ' + ht.hardcoded.distinctColors + ' 色' })}
+        </table>
+      </div>
+      <div class="trade">
+        <h3>③ 看板状态放 URL hash vs localStorage</h3>
+        <p class="why">hash 链接自带状态、可分享但不跨标签实时同步；localStorage 能借 storage 事件扇出，但离开设备就丢。</p>
+        <table class="metrics">
+          <tr><th>场景</th><th>URL hash</th><th>localStorage</th><th>方差/说明</th></tr>
+          ${row('状态体积', fmt(hs.hash.bytes) + ' B', fmt(hs.localStorage.bytes) + ' B', { text: (hs.delta.bytes >= 0 ? '+' : '') + hs.delta.bytes + ' B' })}
+          ${row('读取耗时 ± σ', hs.hash.readMs.medianMs + 'ms ± ' + hs.hash.readMs.stddevMs + 'ms', hs.localStorage.readMs.medianMs + 'ms ± ' + hs.localStorage.readMs.stddevMs + 'ms', { text: '刷新恢复' })}
+          ${row('刷新', hs.hash.refresh, hs.localStorage.refresh, { text: '两者 σ≈0' })}
+          ${row('分享', '链接自带状态，可复制', '不可分享（仅本设备）', { text: 'hash σ≈0；localStorage 不适用', cls: 'delta' })}
+          ${row('多标签同步', '不同步（无 storage 事件）', 'storage 事件实时扇出', { text: '用下方双标签探测实测', cls: 'delta' })}
+        </table>
+        <div class="meta-row" style="margin-top:10px">
+          <button class="btn" id="sync-test">模拟一次跨标签状态写入</button>
+          <span id="sync-result" style="color:var(--muted);font-size:12px"></span>
+        </div>
+      </div>`;
+    $('#sync-test').addEventListener('click', runMultiTabProbe);
+  }
+
+  // Live browser-side probe: write through both mechanisms and report timing.
+  function runMultiTabProbe() {
+    const runs = 50;
+    function timeHash() {
+      const start = performance.now();
+      history.replaceState(null, '', '#state=' + encodeURIComponent(JSON.stringify({ at: Date.now(), selected: { file: 'preview.svg', line: 181 } })));
+      JSON.parse(decodeURIComponent(location.hash.slice('#state='.length)));
+      return performance.now() - start;
+    }
+    function timeStorage() {
+      const start = performance.now();
+      localStorage.setItem('trace.probe', JSON.stringify({ at: Date.now(), tab: TAB_ID }));
+      JSON.parse(localStorage.getItem('trace.probe'));
+      return performance.now() - start;
+    }
+    const hashSamples = Array.from({ length: runs }, timeHash);
+    const storageSamples = Array.from({ length: runs }, timeStorage);
+    const stats = (arr) => {
+      const mean = arr.reduce((a, b) => a + b, 0) / arr.length;
+      const sd = Math.sqrt(arr.reduce((a, b) => a + (b - mean) ** 2, 0) / arr.length);
+      return { mean, sd };
+    };
+    const h = stats(hashSamples), s = stats(storageSamples);
+    $('#sync-result').textContent =
+      `hash ${h.mean.toFixed(4)}ms ± ${h.sd.toFixed(4)}（本标签刷新/分享可用，多标签不同步） · ` +
+      `localStorage ${s.mean.toFixed(4)}ms ± ${s.sd.toFixed(4)}（开第二个标签后由 storage 事件同步）`;
+    toast('探测完成：第二个标签应收到 storage 扇出（SSE 同 revision 不会重复渲染）');
+  }
+})();
+</script>
+</body>
+</html>
+</body>
+</html>
